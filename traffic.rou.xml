@@ -1,0 +1,68 @@
+
+<routes>
+    <!-- Vehicle types -->
+    <vType id="car"
+          length="4.5"
+          maxSpeed="15"
+          color="1,1,0"
+          guiShape="passenger"/>
+
+    <vType id="amb"
+          length="6.5"
+          maxSpeed="22"
+          color="1,0,0"
+          vClass="emergency"
+          guiShape="emergency"/>
+
+    <!-- Normal car routes -->
+    <route id="r_south_north" edges="s_in n_out"/>
+    <route id="r_north_south" edges="n_in s_out"/>
+    <route id="r_west_east" edges="w_in e_out"/>
+    <route id="r_east_west" edges="e_in w_out"/>
+
+    <!-- Ambulance from SOUTH -->
+    <route id="amb_s_straight" edges="s_in n_out"/>
+    <route id="amb_s_left"     edges="s_in w_out"/>
+    <route id="amb_s_right"    edges="s_in e_out"/>
+
+    <!-- Ambulance from NORTH -->
+    <route id="amb_n_straight" edges="n_in s_out"/>
+    <route id="amb_n_left"     edges="n_in e_out"/>
+    <route id="amb_n_right"    edges="n_in w_out"/>
+
+    <!-- Ambulance from WEST -->
+    <route id="amb_w_straight" edges="w_in e_out"/>
+    <route id="amb_w_left"     edges="w_in n_out"/>
+    <route id="amb_w_right"    edges="w_in s_out"/>
+
+    <!-- Ambulance from EAST -->
+    <route id="amb_e_straight" edges="e_in w_out"/>
+    <route id="amb_e_left"     edges="e_in s_out"/>
+    <route id="amb_e_right"    edges="e_in n_out"/>
+    
+    
+    
+
+    <!-- Normal traffic: unchanged -->
+    <flow id="car_sn"
+          type="car" route="r_south_north"
+          begin="0" end="3600"
+          departLane="free" period="8"/>
+
+    <flow id="car_ns"
+          type="car" route="r_north_south"
+          begin="0" end="3600"
+          departLane="free" period="8"/>
+
+    <flow id="car_we"
+          type="car" route="r_west_east"
+          begin="0" end="3600"
+          departLane="free" period="8"/>
+
+    <flow id="car_ew"
+          type="car" route="r_east_west"
+          begin="0" end="3600"
+          departLane="free" period="8"/>
+    
+    
+</routes>
