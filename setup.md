@@ -21,3 +21,7 @@ The paths currently used in the code are specific to my computer and may need to
 ### Important
 
 Make sure SUMO, its tools (including TraCI), and the traffic network are correctly installed and configured before running the simulation.
+
+### Running the Simulation
+
+Open the Simulink model named **`s4.slx`** in MATLAB and run the simulation from there.
