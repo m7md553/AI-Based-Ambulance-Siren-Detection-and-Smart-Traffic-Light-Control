@@ -1,40 +1,53 @@
 
 function isEmergency = detectSirenStep(newAudio)
 % =========================================================
-%clear detectSirenStep
-%bdclose all
-%close all
-%clc
+% LIVE SIREN DETECTION USING YAMNET + CUSTOM CNN
+% Smooth Spectrogram Display + Reduced Inference Frequency
 % =========================================================
-    % Persistent Variables
-    persistent trainedNet detectionThreshold consecutiveRequired ...
-               hpFilt audioBuffer consecutiveCount isInitialized ...
-               hFig hImg hBar hStatus numFrames
 
-    % Convert audio to double column
+    persistent trainedNet netYAM featLayer sirenCol ...
+               detectionThreshold consecutiveRequired ...
+               hpFilt audioBuffer consecutiveCount ...
+               isInitialized hFig hImg hBar hStatus ...
+               numFrames nBands processingCounter ...
+               processingInterval lastProbability
+
     newAudio = double(newAudio(:));
-    
 
-    % =========================================================
+    % =====================================================
     % 1. INITIALIZATION
-    % =========================================================
+    % =====================================================
+
     if isempty(isInitialized)
 
-        modelPath = 'D:\project4\trainedSirenModel.mat';
+        modelPath = 'D:\sim\Model_YAMNet_NEWCNN\Model_YAMNet_NEWCNN.mat';
 
         if ~isfile(modelPath)
             error('Model file not found: %s', modelPath);
         end
 
-        modelData = load(modelPath);
-        trainedNet = modelData.trainedNet;
+        modelData = load(modelPath, 'trainedNet', 'classes', 'sirenCol');
 
-        detectionThreshold = 0.050;
-        consecutiveRequired = 3;
+        trainedNet = modelData.trainedNet;
+        sirenCol = modelData.sirenCol;
+
+        % Load YAMNet
+        netYAM = audioPretrainedNetwork("yamnet");
+
+        gapIdx = find(arrayfun(@(l) ...
+            isa(l, 'nnet.cnn.layer.GlobalAveragePooling2DLayer'), ...
+            netYAM.Layers), 1, 'last');
+
+        featLayer = netYAM.Layers(gapIdx).Name;
+
+        % Detection settings
+        detectionThreshold = 0.55;
+        consecutiveRequired = 2;
 
         fsTarget = 22050;
-        winSamples = 66150;
+        winSamples = 3 * fsTarget;
 
+        % High Pass Filter
         hpFilt = designfilt('highpassiir', ...
             'FilterOrder', 6, ...
             'PassbandFrequency', 400, ...
@@ -44,35 +57,49 @@ function isEmergency = detectSirenStep(newAudio)
         audioBuffer = zeros(winSamples, 1);
         consecutiveCount = 0;
 
-        % =====================================================
-        % 2. CREATE LIVE GRAPH WINDOW (ONCE)
-        % =====================================================
+        % Inference interval: 0.6 seconds
+        processingInterval = round(0.6 * fsTarget);
+        processingCounter = 0;
 
-        numFrames = 319;
+        lastProbability = 0;
+
+        % =================================================
+        % 2. INITIALIZE DISPLAY
+        % =================================================
+
+        dummyS = yamnetPreprocess(zeros(winSamples,1), fsTarget);
+
+        [tFrames, nBands] = size(dummyS(:,:,1,1));
+
+        numFrames = tFrames;
 
         hFig = figure( ...
-            'Name', 'AI Ambulance Siren Detection - Live Monitor', ...
+            'Name', 'Live Siren Detection - YAMNet + CNN', ...
             'NumberTitle', 'off', ...
             'Color', [0.12 0.12 0.12], ...
             'Position', [100 100 1000 650]);
 
-        % Spectrogram Axes
+        % Spectrogram Display
         ax1 = subplot(2,1,1);
 
-        initialSpec = zeros(64, numFrames);
-
-        hImg = imagesc(ax1, initialSpec);
+        hImg = imagesc(ax1, ...
+            linspace(0,3,numFrames), ...
+            1:nBands, ...
+            repmat(-7, nBands, numFrames));
 
         axis(ax1, 'xy');
 
-        colormap(ax1, turbo);
+        set(hImg, 'Interpolation', 'bilinear');
 
+        colormap(ax1, turbo(256));
         colorbar(ax1);
 
-        title(ax1, 'Live Mel Spectrogram', ...
+        caxis(ax1, [-7 3]);
+
+        title(ax1, 'Live YAMNet Mel Spectrogram', ...
             'Color', 'w', 'FontSize', 13);
 
-        xlabel(ax1, 'Time Frames', 'Color', 'w');
+        xlabel(ax1, 'Time (Seconds)', 'Color', 'w');
         ylabel(ax1, 'Mel Bands', 'Color', 'w');
 
         set(ax1, ...
@@ -80,135 +107,188 @@ function isEmergency = detectSirenStep(newAudio)
             'XColor', 'w', ...
             'YColor', 'w');
 
-        caxis(ax1, [-80 20]);
+        xlim(ax1, [0 3]);
+        ylim(ax1, [1 nBands]);
 
-        % Probability Bar Axes
+        % Probability Bar
         ax2 = subplot(2,1,2);
 
-        hBar = bar(ax2, 0, 0.8);
+        hBar = bar(ax2, 1, 0, 0.35);
 
         hBar.FaceColor = [0.2 0.6 0.2];
+
         hold(ax2, 'on');
-        hThreshold = yline(ax2, detectionThreshold * 100, ...
-             '--y', ...
-             sprintf('Threshold = %.1f%%', detectionThreshold * 100), ...
-             'LineWidth', 2, ...
-             'LabelHorizontalAlignment', 'right', ...
-             'LabelVerticalAlignment', 'bottom');
+
+        yline(ax2, detectionThreshold * 100, ...
+            '--y', ...
+            sprintf('Threshold = %.0f%%', ...
+            detectionThreshold * 100), ...
+            'LineWidth', 2);
+
         hold(ax2, 'off');
 
         ylim(ax2, [0 100]);
-        xlim(ax2, [-1 1]);
+        xlim(ax2, [0.5 1.5]);
 
         ylabel(ax2, 'Siren Probability (%)', 'Color', 'w');
-
-        title(ax2, 'AI Detection Confidence', ...
-            'Color', 'w', 'FontSize', 13);
 
         set(ax2, ...
             'Color', [0.1 0.1 0.1], ...
             'XColor', 'w', ...
             'YColor', 'w');
 
-        % Status Text
         hStatus = title(ax2, ...
             'Initializing AI Detection...', ...
-            'Color', 'w');
+            'Color', 'w', ...
+            'FontSize', 13);
 
         isInitialized = true;
 
-        fprintf('\nAI System Initialized Successfully!\n');
+        fprintf('\nYAMNet + CNN Initialized Successfully!\n');
         fprintf('High Pass Filter: 400 Hz\n');
-        fprintf('Detection Threshold: %.3f\n\n', detectionThreshold);
+        fprintf('Detection Threshold: %.2f\n', detectionThreshold);
+        fprintf('Inference Interval: 0.6 seconds\n\n');
 
     end
 
-    % =========================================================
-    % 3. AUDIO FILTERING
-    % =========================================================
+    % =====================================================
+    % 3. HIGH PASS FILTER
+    % =====================================================
 
     filteredAudio = filter(hpFilt, newAudio);
     filteredAudio = filteredAudio(:);
 
-    % =========================================================
-    % 4. FIFO BUFFER UPDATE
-    % =========================================================
+    % =====================================================
+    % 4. UPDATE AUDIO BUFFER
+    % =====================================================
 
     frameLen = length(filteredAudio);
 
     if frameLen >= length(audioBuffer)
+
         audioBuffer = filteredAudio(end-length(audioBuffer)+1:end);
+
     else
+
         audioBuffer = [audioBuffer(frameLen+1:end); filteredAudio];
+
     end
 
-    % =========================================================
-    % 5. VOICE ACTIVITY DETECTION
-    % =========================================================
+    processingCounter = processingCounter + frameLen;
 
-    minEnergyThreshold = 0.008;
+    % =====================================================
+    % 5. FRAME ENERGY / SILENCE DETECTION
+    % =====================================================
 
-    signalEnergy = rms(audioBuffer);
+    minEnergyThreshold = 0.001;
 
+    signalEnergy = rms(filteredAudio);
+
+    % Wait for inference interval
+    if processingCounter < processingInterval
+
+        isEmergency = double(consecutiveCount >= consecutiveRequired);
+        return;
+
+    end
+
+    processingCounter = 0;
+
+    % Silence handling
     if signalEnergy < minEnergyThreshold
 
         consecutiveCount = max(0, consecutiveCount - 1);
+        lastProbability = 0;
 
         isEmergency = double(0);
 
-        % Update graph during silence
-        if ~isempty(hBar) && isgraphics(hBar)
+        if isgraphics(hBar)
             set(hBar, 'YData', 0);
-        end    
-
-        if ~isempty(hBar) && isgraphics(hBar)
             set(hBar, 'FaceColor', [0.2 0.6 0.2]);
         end
 
+        if isgraphics(hImg)
+            set(hImg, 'CData', repmat(-7, nBands, numFrames));
+        end
+
         set(hStatus, ...
-            'String', sprintf('SILENCE - Energy: %.4f', signalEnergy), ...
+            'String', sprintf('SILENCE - RMS: %.5f', signalEnergy), ...
             'Color', [0.2 0.8 0.2]);
 
         drawnow limitrate;
 
-        fprintf('Silence | Energy: %.4f | Counter: %d\n', ...
+        fprintf('Silence | RMS: %.5f | Counter: %d\n', ...
             signalEnergy, consecutiveCount);
 
         return;
 
     end
 
-    % =========================================================
-    % 6. MEL SPECTROGRAM FEATURE EXTRACTION
-    % =========================================================
+    % =====================================================
+    % 6. AUDIO NORMALIZATION
+    % =====================================================
 
-    fsTarget = 22050;
+    pkBuffer = max(abs(audioBuffer));
 
-    S = melSpectrogram(audioBuffer, fsTarget, ...
-        'Window', hamming(round(0.030 * fsTarget), 'periodic'), ...
-        'OverlapLength', round(0.015 * fsTarget), ...
-        'NumBands', 64, ...
-        'FrequencyRange', [50 8000]);
+    if pkBuffer < 1e-8
 
-    feat = single(10 * log10(S + eps));
+        lastProbability = 0;
+        consecutiveCount = max(0, consecutiveCount - 1);
+        isEmergency = double(0);
+        return;
 
-    featInput = reshape(feat, [64, size(feat, 2), 1]);
+    end
 
-    % =========================================================
-    % 7. CNN PREDICTION
-    % =========================================================
+    audioNorm = audioBuffer / pkBuffer;
 
-    scores = predict(trainedNet, featInput);
+    % =====================================================
+    % 7. YAMNET PREPROCESSING
+    % =====================================================
 
-    pSiren = double(scores(1));
+    S = yamnetPreprocess(audioNorm, 22050);
 
-    % =========================================================
-    % 8. LEAKY COUNTER
-    % =========================================================
+    if ndims(S) < 4
+
+        S = reshape(S, size(S,1), size(S,2), 1, []);
+
+    end
+
+    % =====================================================
+    % 8. YAMNET EMBEDDING EXTRACTION
+    % =====================================================
+
+    emb = extractdata(predict(netYAM, ...
+        dlarray(single(S), 'SSCB'), ...
+        'Outputs', featLayer));
+
+    emb = reshape(emb, 1024, []);
+
+    % =====================================================
+    % 9. FEATURE VECTOR
+    % =====================================================
+
+    featVec = single([ ...
+        mean(emb, 2)', ...
+        max(emb, [], 2)' ]);
+
+    % =====================================================
+    % 10. CUSTOM CNN PREDICTION
+    % =====================================================
+
+    scores = predict(trainedNet, featVec);
+
+    pSiren = double(scores(sirenCol));
+
+    lastProbability = pSiren;
+
+    % =====================================================
+    % 11. LEAKY COUNTER
+    % =====================================================
 
     if pSiren >= detectionThreshold
 
-        consecutiveCount = min(5, consecutiveCount + 1);
+        consecutiveCount = min(consecutiveRequired + 1, ...
+            consecutiveCount + 1);
 
     else
 
@@ -216,50 +296,45 @@ function isEmergency = detectSirenStep(newAudio)
 
     end
 
-    % =========================================================
-    % 9. FINAL EMERGENCY DECISION
-    % =========================================================
+    % =====================================================
+    % 12. EMERGENCY DECISION
+    % =====================================================
 
-    if consecutiveCount >= consecutiveRequired
+    isEmergency = double(consecutiveCount >= consecutiveRequired);
 
-        isEmergency = double(1);
+    if isEmergency
 
-        fprintf(['SIREN DETECTED! | Probability: %.1f%% ' ...
-                 '| Counter: %d\n'], ...
-                 pSiren * 100, consecutiveCount);
+        fprintf('SIREN DETECTED! | Probability: %.2f%% | Counter: %d\n', ...
+            pSiren * 100, consecutiveCount);
 
     else
 
-        isEmergency = double(0);
-
-        fprintf(['Normal / Noise | Probability: %.1f%% ' ...
-                 '| Counter: %d\n'], ...
-                 pSiren * 100, consecutiveCount);
+        fprintf('Normal / Noise | Probability: %.2f%% | Counter: %d\n', ...
+            pSiren * 100, consecutiveCount);
 
     end
 
-    % =========================================================
-    % 10. LIVE GRAPH UPDATE
-    % =========================================================
+    % =====================================================
+    % 13. MEL SPECTROGRAM UPDATE
+    % =====================================================
+
+    specData = double(S(:,:,1,end))';
+
+    set(hImg, 'CData', specData);
+    set(hImg, 'Interpolation', 'bilinear');
+
+    % =====================================================
+    % 14. PROBABILITY BAR UPDATE
+    % =====================================================
 
     pct = pSiren * 100;
 
-    % Update Spectrogram
-    featDisp = feat(:, 1:min(size(feat, 2), numFrames));
-
-    if size(featDisp, 2) < numFrames
-
-        featDisp = [featDisp, ...
-            zeros(64, numFrames-size(featDisp,2), 'single')];
-
-    end
-
-    set(hImg, 'CData', featDisp);
-
-    % Update Probability Bar
     set(hBar, 'YData', pct);
 
-    % Update Status and Colors
+    % =====================================================
+    % 15. STATUS UPDATE
+    % =====================================================
+
     if consecutiveCount >= consecutiveRequired
 
         set(hBar, 'FaceColor', [0.85 0.1 0.1]);
@@ -287,7 +362,6 @@ function isEmergency = detectSirenStep(newAudio)
 
     end
 
-    % Fast Graph Refresh
     drawnow limitrate;
 
 end
