@@ -18,10 +18,10 @@ CMD_FILE = r"D:\sim\tls_cmd.txt"
 TLS_ID = "center"
 
 AMB_INTERVAL = 38.0
-
+EMERGENCY_YELLOW_TIME = 3.0
 GREEN_TIME = 15.0
 YELLOW_TIME = 5.0
-RED_YELLOW_TIME = 1.5
+RED_YELLOW_TIME = 3.0
 ALL_RED_TIME = 1.0
 
 CLEARING_DISTANCE = 35.0
@@ -509,15 +509,27 @@ def main():
                     )
                 )
 
-                if current_state != desired_state:
+                if current_state == desired_state:
+                    transition = None
+
+                elif transition != "emg_yellow":
+                    set_state(to_yellow(desired_state))
+                    transition = "emg_yellow"
+                    transition_start = sim_time
+
+                    print(
+                        "[EMERGENCY] Pre-green yellow:",
+                        to_yellow(desired_state)
+                    )
+
+                elif sim_time - transition_start >= EMERGENCY_YELLOW_TIME:
                     set_state(desired_state)
+                    transition = None
 
                     print(
                         "[EMERGENCY] Priority signal:",
                         desired_state
                     )
-
-                transition = None
 
             else:
                 if emergency_active:
